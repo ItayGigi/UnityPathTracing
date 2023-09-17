@@ -67,7 +67,14 @@ public class DrawRayTracing : MonoBehaviour
 		}
 	}
 
-	void SetCamParams(Material material, Camera camera)
+    private void OnApplicationQuit()
+    {
+        _meshes?.Release();
+        _triangles?.Release();
+        _vertices?.Release();
+    }
+
+    void SetCamParams(Material material, Camera camera)
 	{
 		float planeHeight = camera.nearClipPlane * Mathf.Tan(camera.fieldOfView * 0.5f * Mathf.Deg2Rad) * 2;
 		float planeWidth = planeHeight * camera.aspect;
