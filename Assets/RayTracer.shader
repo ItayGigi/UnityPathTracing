@@ -230,6 +230,33 @@ Shader "Hidden/RayTracer"
 				return t; //intersection point is in the triangle, return distance to plane
 			}
 
+			//from scratchapixel
+			float MTRayTriangleIntersection(Ray ray, Triangle tri)
+			{
+				const float EPSILON = 0.0000001;
+
+				float3 v0v1 = tri.v1 - tri.v0;
+				float3 v0v2 = tri.v2 - tri.v0;
+				float3 pvec = cross(ray.dir, v0v2);
+				float det = dot(v0v1, pvec);
+
+				// if the determinant is negative, the triangle is 'back facing'
+				// if the determinant is close to 0, the ray misses the triangle
+				if (det < EPSILON) return -1;
+
+				float invDet = 1. / det;
+
+				float3 tvec = ray.origin - tri.v0;
+				float u = dot(tvec, pvec) * invDet;
+				if (u < 0 || u > 1) return -1;
+
+				float3 qvec = cross(tvec, v0v1);
+				float v = dot(ray.dir, qvec) * invDet;
+				if (v < 0 || u + v > 1) return -1;
+				
+				return dot(v0v2, qvec) * invDet;
+			}
+
 			HitInfo CastRaySphere(Ray ray){
 				float closestHitDist = -1.;
 				Sphere closestHitSphere;
@@ -262,7 +289,7 @@ Shader "Hidden/RayTracer"
 			float RayMeshIntersection(Ray ray, MeshInfo mesh){
 				float closestDist = -1.;
 				for (uint i = mesh.startIndex; i < mesh.endIndex; i += 3){
-					float dist = RayTriangleIntersection(ray, GetTri(i));
+					float dist = MTRayTriangleIntersection(ray, GetTri(i));
 
 					if (dist > 0 && (dist < closestDist || closestDist == -1)){
 						closestDist = dist;
