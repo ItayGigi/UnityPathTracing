@@ -2,6 +2,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 
 [StructLayout(LayoutKind.Explicit)]
@@ -30,14 +32,14 @@ public class DrawRayTracing : MonoBehaviour
 
 	ComputeBuffer _meshes;
 	ComputeBuffer _triangles;
-
+    ComputeBuffer _vertices;
 
     private void Start()
 	{
 		_frame = 0;
-	}
+    }
 
-	private void OnRenderImage(RenderTexture source, RenderTexture destination)
+    private void OnRenderImage(RenderTexture source, RenderTexture destination)
 	{
 		if (_resetRender || (Camera.current.name == "SceneCamera" && _rayTraceInScene))
 		{ 
@@ -83,32 +85,44 @@ public class DrawRayTracing : MonoBehaviour
 	void SetSceneParams()
 	{
         MeshFilter[] meshFilters = FindObjectsOfType<MeshFilter>();
-        int triAmount = 0;
-        foreach (MeshFilter meshFilter in meshFilters) triAmount += meshFilter.sharedMesh.triangles.Length;
 
-        Vector3[] tridata = new Vector3[triAmount];
-		int meshFloatAmount = (sizeof(float) * 11 + sizeof(uint) * 2) / sizeof(float);
+        int triAmount = 0, vertAmount = 0;
+		foreach (MeshFilter meshFilter in meshFilters)
+		{
+			triAmount += meshFilter.sharedMesh.triangles.Length;
+			vertAmount += meshFilter.sharedMesh.vertexCount;
+		}
+
+        int[] tridata = new int[triAmount];
+        Vector3[] vertdata = new Vector3[vertAmount];
+        int meshFloatAmount = (sizeof(float) * 11 + sizeof(uint) * 2) / sizeof(float);
 		float[] meshdata = new float[meshFloatAmount * meshFilters.Length];
-		int currVertex = 0;
+		int currVertex = 0, currIndex = 0;
 
 		for (int i = 0; i < meshFilters.Length; i++)
         {
 			Matrix4x4 localToWorld = meshFilters[i].gameObject.transform.localToWorldMatrix;
 
-			//1 start index
-			meshdata[i * meshFloatAmount] = IntToFloat.Convert((uint)(currVertex/3));
+            //1 start index
+            meshdata[i * meshFloatAmount] = IntToFloat.Convert((uint)currIndex);
 
-			//triangle vertex array
+			//triangle indices array
             foreach (int j in meshFilters[i].sharedMesh.triangles)
             {
-				tridata[currVertex++] = localToWorld.MultiplyPoint3x4(meshFilters[i].sharedMesh.vertices[j]);
+				tridata[currIndex++] = currVertex + j;
             }
 			
 			//2 end index
-			meshdata[i * meshFloatAmount+1] = IntToFloat.Convert((uint)(currVertex / 3));
+			meshdata[i * meshFloatAmount+1] = IntToFloat.Convert((uint)currIndex);
+			
+            //vertices array
+            foreach (Vector3 vert in meshFilters[i].sharedMesh.vertices)
+            {
+                vertdata[currVertex++] = localToWorld.MultiplyPoint3x4(vert);
+            }
 
-			//3-8 min and max bounds
-			Bounds bounds = meshFilters[i].GetComponent<MeshRenderer>().bounds;
+            //3-8 min and max bounds
+            Bounds bounds = meshFilters[i].GetComponent<MeshRenderer>().bounds;
 
 			meshdata[i * meshFloatAmount + 2] = bounds.min.x;
 			meshdata[i * meshFloatAmount + 3] = bounds.min.y;
@@ -136,17 +150,21 @@ public class DrawRayTracing : MonoBehaviour
 		{
 			_meshes?.Release();
 			_triangles?.Release();
+			_vertices?.Release();
 
             _meshes = new ComputeBuffer(meshFilters.Length, sizeof(float) * 11 + sizeof(uint) * 2);
-            _triangles = new ComputeBuffer(triAmount, sizeof(float) * 9);
+            _triangles = new ComputeBuffer(triAmount, sizeof(int));
+			_vertices = new ComputeBuffer(vertAmount, sizeof(float) * 3);
 
             _frame = 0;
 
             _triangles.SetData(tridata);
             _meshes.SetData(meshdata);
+			_vertices.SetData(vertdata);
 
             _cameraMaterial.SetBuffer("_Triangles", _triangles);
             _cameraMaterial.SetBuffer("_Meshes", _meshes);
+			_cameraMaterial.SetBuffer("_Vertices", _vertices);
             _cameraMaterial.SetInt("_ObjCount", meshFilters.Length);
         }
 

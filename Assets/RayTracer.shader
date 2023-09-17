@@ -115,13 +115,21 @@ Shader "Hidden/RayTracer"
 			uniform matrix _CamToWorld;
 			uniform StructuredBuffer<Sphere> _Spheres;
 			uniform int _ObjCount;
-			uniform StructuredBuffer<Triangle> _Triangles;
+			uniform StructuredBuffer<int> _Triangles;
 			uniform StructuredBuffer<MeshInfo> _Meshes;
+			uniform StructuredBuffer<float3> _Vertices;
 			uniform int _MaxBounceCount;
 			uniform int _Samples;
 			uniform sampler2D _LastFrame;
 			uniform float _BlurSize;
 			uint hitTriIndex;
+
+			Triangle GetTri(int i){
+				Triangle tri = {_Vertices[_Triangles[i]],
+								_Vertices[_Triangles[i+1]],
+								_Vertices[_Triangles[i+2]]};
+				return tri;
+			}
 
 			bool RayBoundsIntersection(Ray ray, float3 _min, float3 _max) 
 			{ 
@@ -253,8 +261,8 @@ Shader "Hidden/RayTracer"
 
 			float RayMeshIntersection(Ray ray, MeshInfo mesh){
 				float closestDist = -1.;
-				for (uint i = mesh.startIndex; i < mesh.endIndex; i++){
-					float dist = RayTriangleIntersection(ray, _Triangles[i]);
+				for (uint i = mesh.startIndex; i < mesh.endIndex; i += 3){
+					float dist = RayTriangleIntersection(ray, GetTri(i));
 
 					if (dist > 0 && (dist < closestDist || closestDist == -1)){
 						closestDist = dist;
@@ -278,7 +286,7 @@ Shader "Hidden/RayTracer"
 					if (dist > 0 && (dist < closestHitDist || closestHitDist == -1)){
 						closestHitDist = dist;
 						closestHitMesh = _Meshes[i];
-						closestHitTri = _Triangles[hitTriIndex];
+						closestHitTri = GetTri(hitTriIndex);
 					}
 				}
 
