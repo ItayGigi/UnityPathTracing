@@ -155,9 +155,12 @@ public class DrawRayTracing : MonoBehaviour
 
 		if (_lastSceneData == null || !Enumerable.SequenceEqual(meshdata, _lastSceneData))
 		{
+			print("Recalculating Scene Data...");
+
 			_meshes?.Release();
 			_triangles?.Release();
 			_vertices?.Release();
+
 
             _meshes = new ComputeBuffer(meshFilters.Length, sizeof(float) * 11 + sizeof(uint) * 2);
             _triangles = new ComputeBuffer(triAmount, sizeof(int));
@@ -177,38 +180,4 @@ public class DrawRayTracing : MonoBehaviour
 
         _lastSceneData = meshdata;
     }
-
-    void SetSpheresSceneParams(ComputeBuffer buffer, int floatAmount, MeshRenderer[] meshRenderers)
-	{
-		float[] data = new float[floatAmount * meshRenderers.Length];
-		for (int i = 0; i < meshRenderers.Length; i++)
-		{
-			Material material = meshRenderers[i].sharedMaterial;
-
-			bool emission = material.shader.name != "Standard";
-
-			Vector3 position = meshRenderers[i].gameObject.transform.position;
-			data[i * floatAmount] = position.x;
-			data[i * floatAmount + 1] = position.y;
-			data[i * floatAmount + 2] = position.z;
-
-			data[i * floatAmount + 3] = meshRenderers[i].gameObject.transform.lossyScale.x / 2;
-
-			Color color = emission ? material.GetColor("_Color") : material.color;
-			data[i * floatAmount + 4] = color.r;
-			data[i * floatAmount + 5] = color.g;
-			data[i * floatAmount + 6] = color.b;
-
-			data[i * floatAmount + 7] = !emission ? material.GetFloat("_Glossiness") : 0f;
-			data[i * floatAmount + 8] = emission ? material.GetFloat("_Emission") : 0f;
-		}
-
-		buffer.SetData(data);
-
-		_cameraMaterial.SetBuffer("_Spheres", buffer);
-		_cameraMaterial.SetInt("_ObjCount", meshRenderers.Length);
-
-		if (_lastSceneData != null && !Enumerable.SequenceEqual(data, _lastSceneData)) _frame = 0;
-		_lastSceneData = data;
-	}
 }
