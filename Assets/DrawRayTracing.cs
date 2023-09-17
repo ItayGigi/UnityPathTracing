@@ -28,7 +28,11 @@ public class DrawRayTracing : MonoBehaviour
 	Vector4 _lastViewParams;
 	float[] _lastSceneData;
 
-	private void Start()
+	ComputeBuffer _meshes;
+	ComputeBuffer _triangles;
+
+
+    private void Start()
 	{
 		_frame = 0;
 	}
@@ -45,18 +49,7 @@ public class DrawRayTracing : MonoBehaviour
 		{
 			SetCamParams(_cameraMaterial, Camera.current);
 
-			//MeshRenderer[] meshRenderers = FindObjectsOfType<MeshRenderer>();
-			//int structSize = sizeof(float) * 9;
-			//ComputeBuffer buffer = new ComputeBuffer(meshRenderers.Length, structSize);
-			//SetSceneParams(buffer, 9, meshRenderers);
-
-			MeshFilter[] meshFilters = FindObjectsOfType<MeshFilter>();
-			ComputeBuffer meshes = new ComputeBuffer(meshFilters.Length, sizeof(float)*11+sizeof(uint)*2);
-			int triAmount = 0;
-			foreach (MeshFilter meshFilter in meshFilters) triAmount += meshFilter.sharedMesh.triangles.Length;
-			ComputeBuffer triangles = new ComputeBuffer(triAmount, sizeof(float) * 9);
-
-			SetSceneParams(triangles, meshes, meshFilters);
+			SetSceneParams();
 
 			_cameraMaterial.SetInteger("_FrameNum", ++_frame);
 
@@ -65,10 +58,6 @@ public class DrawRayTracing : MonoBehaviour
 			_cameraMaterial.SetTexture("_LastFrame", _lastFrame);
 			Graphics.Blit(null, _lastFrame, _cameraMaterial);
 			Graphics.Blit(_lastFrame, destination);
-
-			//buffer.Release();
-			meshes.Release();
-			triangles.Release();
 		}
 		else
 		{
@@ -91,10 +80,14 @@ public class DrawRayTracing : MonoBehaviour
 		_lastViewParams = viewParams;
 	}
 
-	void SetSceneParams(ComputeBuffer triangles, ComputeBuffer meshes, MeshFilter[] meshFilters)
+	void SetSceneParams()
 	{
-		Vector3[] tridata = new Vector3[triangles.count];
-		int meshFloatAmount = meshes.stride / sizeof(float);
+        MeshFilter[] meshFilters = FindObjectsOfType<MeshFilter>();
+        int triAmount = 0;
+        foreach (MeshFilter meshFilter in meshFilters) triAmount += meshFilter.sharedMesh.triangles.Length;
+
+        Vector3[] tridata = new Vector3[triAmount];
+		int meshFloatAmount = (sizeof(float) * 11 + sizeof(uint) * 2) / sizeof(float);
 		float[] meshdata = new float[meshFloatAmount * meshFilters.Length];
 		int currVertex = 0;
 
@@ -139,18 +132,28 @@ public class DrawRayTracing : MonoBehaviour
 			meshdata[i * meshFloatAmount + 12] = emission ? material.GetFloat("_Emission") : 0f;
 		}
 
-		triangles.SetData(tridata);
-		meshes.SetData(meshdata);
+		if (_lastSceneData == null || !Enumerable.SequenceEqual(meshdata, _lastSceneData))
+		{
+			_meshes?.Release();
+			_triangles?.Release();
 
-		_cameraMaterial.SetBuffer("_Triangles", triangles);
-		_cameraMaterial.SetBuffer("_Meshes", meshes);
-		_cameraMaterial.SetInt("_ObjCount", meshFilters.Length);
+            _meshes = new ComputeBuffer(meshFilters.Length, sizeof(float) * 11 + sizeof(uint) * 2);
+            _triangles = new ComputeBuffer(triAmount, sizeof(float) * 9);
 
-		if (_lastSceneData != null && !Enumerable.SequenceEqual(meshdata, _lastSceneData)) _frame = 0;
-		_lastSceneData = meshdata;
-	}
+            _frame = 0;
 
-	void SetSpheresSceneParams(ComputeBuffer buffer, int floatAmount, MeshRenderer[] meshRenderers)
+            _triangles.SetData(tridata);
+            _meshes.SetData(meshdata);
+
+            _cameraMaterial.SetBuffer("_Triangles", _triangles);
+            _cameraMaterial.SetBuffer("_Meshes", _meshes);
+            _cameraMaterial.SetInt("_ObjCount", meshFilters.Length);
+        }
+
+        _lastSceneData = meshdata;
+    }
+
+    void SetSpheresSceneParams(ComputeBuffer buffer, int floatAmount, MeshRenderer[] meshRenderers)
 	{
 		float[] data = new float[floatAmount * meshRenderers.Length];
 		for (int i = 0; i < meshRenderers.Length; i++)

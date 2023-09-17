@@ -62,7 +62,7 @@ Material:
     m_Ints:
     - _MaxBounceCount: 10
     - _MaxSamples: 7000
-    - _Samples: 5
+    - _Samples: 1
     m_Floats:
     - _BlurSize: 0
     - _BumpScale: 1
