@@ -111,6 +111,11 @@ Shader "Hidden/RayTracer"
 				Material hitMat;
 			};
 
+			struct BVHNode{
+				float3 aabbMin, aabbMax;
+				uint firstTriOrChild, triCount;
+			};
+
 			uniform float3 _ViewParams;
 			uniform matrix _CamToWorld;
 			uniform StructuredBuffer<Sphere> _Spheres;
@@ -118,6 +123,8 @@ Shader "Hidden/RayTracer"
 			uniform StructuredBuffer<int> _Triangles;
 			uniform StructuredBuffer<MeshInfo> _Meshes;
 			uniform StructuredBuffer<float3> _Vertices;
+			uniform StructuredBuffer<BVHNode> _BVHNodes;
+			uniform StructuredBuffer<uint> _BVHTriIndices;
 			uniform int _MaxBounceCount;
 			uniform int _Samples;
 			uniform sampler2D _LastFrame;
