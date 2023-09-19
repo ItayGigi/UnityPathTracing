@@ -1,12 +1,16 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Unity.VisualScripting;
 using UnityEditor;
 using UnityEditor.Experimental.GraphView;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using static UnityEditor.PlayerSettings;
 
 [StructLayout(LayoutKind.Explicit)]
 struct IntToFloat
@@ -181,7 +185,7 @@ public class DrawRayTracing : MonoBehaviour
             _triangles = new ComputeBuffer(triAmount, sizeof(int));
             _vertices = new ComputeBuffer(vertAmount, sizeof(float) * 3);
             _bvhNodes = new ComputeBuffer(bvhNodes.Length, sizeof(float) * 6 + sizeof(uint) * 2);
-            _bvhTriIndices = new ComputeBuffer(triAmount/3, sizeof(uint));
+            _bvhTriIndices = new ComputeBuffer(triAmount / 3, sizeof(uint));
 
             _frame = 0;
 
@@ -226,6 +230,20 @@ public class DrawRayTracing : MonoBehaviour
 
         Subdivide(rootIndex, ref indices, ref nodes);
 
+        //foreach (BVHNode node in nodes)
+        //{
+        //    if (node.triCount > 0)
+        //    {
+        //        print(node.triCount);
+        //        UnityEngine.Debug.DrawLine(centroids[indices[node.firstTriOrChild + 1]], centroids[indices[node.firstTriOrChild + 1]] + Vector3.up * 0.2f, Color.blue, 10f);
+
+        //        for (uint i = node.firstTriOrChild; i < node.firstTriOrChild + node.triCount; i++)
+        //        {
+        //            //UnityEngine.Debug.DrawLine(centroids[indices[i]], centroids[indices[i]] + Vector3.up * 0.2f);
+        //        }
+        //    }
+        //}
+
 
         Vector3 GetTriVertex(uint index)
         {
@@ -251,13 +269,34 @@ public class DrawRayTracing : MonoBehaviour
         void Subdivide(uint nIndex, ref uint[] indices, ref BVHNode[] nodes)
         {
             if (nodes[nIndex].triCount <= 2) return;
-            
+
             // determine split axis and position
             Vector3 extent = nodes[nIndex].aabbMax - nodes[nIndex].aabbMin;
-            int axis = 0;
-            if (extent.y > extent.x) axis = 1;
-            if (extent.z > extent[axis]) axis = 2;
-            float splitPos = nodes[nIndex].aabbMin[axis] + extent[axis] / 2;
+
+            //int axis = 0;
+            //if (extent.y > extent.x) axis = 1;
+            //if (extent.z > extent[axis]) axis = 2;
+            //float splitPos = nodes[nIndex].aabbMin[axis] + extent[axis] / 2;
+
+            // determine split axis using SAH
+            int bestAxis = -1, axis;
+            float bestPos = 0, bestCost = float.PositiveInfinity;
+            for (axis = 0; axis < 3; axis++)
+                for (uint i = 0; i < nodes[nIndex].triCount; i++)
+                {
+                    float candidatePos = centroids[indices[nodes[nIndex].firstTriOrChild + i]][axis];
+                    float cost = EvaluateSAH(nodes[nIndex], axis, candidatePos, ref indices);
+                    if (cost < bestCost)
+                    {
+                        bestPos = candidatePos;
+                        bestAxis = axis;
+                        bestCost = cost;
+                    }
+                }
+            axis = bestAxis;
+            float splitPos = bestPos;
+
+            //float splitPos = nodes[nIndex].aabbMin[axis] + extent[axis] / 2;
 
             //reorder the indices array to split the triangles
             uint l = nodes[nIndex].firstTriOrChild;
@@ -276,7 +315,11 @@ public class DrawRayTracing : MonoBehaviour
             }
 
             uint leftCount = l - nodes[nIndex].firstTriOrChild;
-            if (leftCount == 0 || leftCount == nodes[nIndex].triCount) return;
+            if (leftCount == 0 || leftCount == nodes[nIndex].triCount)
+            {
+                print(nodes[nIndex].triCount);
+                return;
+            }
 
             //create child nodes
             uint leftChildIdx = nodesUsed++;
@@ -294,6 +337,43 @@ public class DrawRayTracing : MonoBehaviour
             // recurse
             Subdivide(leftChildIdx, ref indices, ref nodes);
             Subdivide(rightChildIdx, ref indices, ref nodes);
+        }
+
+        float EvaluateSAH(BVHNode node, int axis, float pos, ref uint[] indices)
+        {
+            // determine triangle counts and bounds for this split candidate
+            Vector3 leftBoxMin = Vector3.positiveInfinity, leftBoxMax = Vector3.negativeInfinity, rightBoxMin = Vector3.positiveInfinity, rightBoxMax = Vector3.negativeInfinity;
+            int leftCount = 0, rightCount = 0;
+            for (uint i = 0; i < node.triCount; i++)
+            {
+                uint triIndex = indices[node.firstTriOrChild + i];
+                if (centroids[triIndex][axis] < pos)
+                {
+                    leftCount++;
+                    leftBoxMin = Vector3.Min(leftBoxMin, GetTriVertex(triIndex * 3));
+                    leftBoxMin = Vector3.Min(leftBoxMin, GetTriVertex(triIndex * 3 + 1));
+                    leftBoxMin = Vector3.Min(leftBoxMin, GetTriVertex(triIndex * 3 + 2));
+                    leftBoxMax = Vector3.Max(leftBoxMax, GetTriVertex(triIndex * 3));
+                    leftBoxMax = Vector3.Max(leftBoxMax, GetTriVertex(triIndex * 3 + 1));
+                    leftBoxMax = Vector3.Max(leftBoxMax, GetTriVertex(triIndex * 3 + 2));
+                }
+                else
+                {
+                    rightCount++;
+                    rightBoxMin = Vector3.Min(rightBoxMin, GetTriVertex(triIndex * 3));
+                    rightBoxMin = Vector3.Min(rightBoxMin, GetTriVertex(triIndex * 3 + 1));
+                    rightBoxMin = Vector3.Min(rightBoxMin, GetTriVertex(triIndex * 3 + 2));
+                    rightBoxMax = Vector3.Max(rightBoxMax, GetTriVertex(triIndex * 3));
+                    rightBoxMax = Vector3.Max(rightBoxMax, GetTriVertex(triIndex * 3 + 1));
+                    rightBoxMax = Vector3.Max(rightBoxMax, GetTriVertex(triIndex * 3 + 2));
+                }
+            }
+
+            Vector3 le = leftBoxMax - leftBoxMin;
+            Vector3 re = leftBoxMax - leftBoxMin;
+
+            float cost = leftCount * (le.x * le.y + le.y * le.z + le.z * le.x) + rightCount * (re.x * re.y + re.y * re.z + re.z * re.x);
+            return cost > 0 ? cost : float.PositiveInfinity;
         }
     }
 }

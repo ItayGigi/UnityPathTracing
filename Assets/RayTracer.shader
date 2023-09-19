@@ -307,6 +307,108 @@ Shader "Hidden/RayTracer"
 				return closestDist;
 			}
 
+			float RayBVHIntersection(Ray ray, uint rootIndex){
+				#define FROM_PARENT 0
+				#define FROM_CHILD 1
+				#define FROM_SIBLING 2
+
+				uint current = _BVHNodes[rootIndex].firstTriOrChild;
+				int state = FROM_PARENT;
+				float closestDist = -1.;
+
+				while (current != rootIndex){
+					switch (state){
+						case FROM_CHILD:
+							if (current == rootIndex) return closestDist;
+
+							bool isFirstChild = false;
+							int parent = -1;
+							for (int i=0; i<current; i++){
+								if (_BVHNodes[i].firstTriOrChild == current && _BVHNodes[i].triCount == 0){
+									isFirstChild = true;
+									parent = i;
+									break;
+								}
+								if (_BVHNodes[i].firstTriOrChild == current-1 && _BVHNodes[i].triCount == 0){
+									parent = i;
+								}
+							}
+							
+							if (isFirstChild){
+								current++;
+								state = FROM_SIBLING;
+							}
+							else{
+								current = parent;
+								state = FROM_CHILD;
+							}
+							break;
+						
+						case FROM_SIBLING:
+							if (!RayBoundsIntersection(ray, _BVHNodes[current].aabbMin, _BVHNodes[current].aabbMax)){
+								for (int i=0; i<current; i++){
+									if (_BVHNodes[i].firstTriOrChild == current && _BVHNodes[i].triCount == 0){
+										current = i;
+										break;
+									}
+									if (_BVHNodes[i].firstTriOrChild == current-1 && _BVHNodes[i].triCount == 0){
+										current = i;
+									}
+								}
+								state = FROM_CHILD;
+							}
+							else if (_BVHNodes[current].triCount > 0){ //leaf
+								for (int i=_BVHNodes[current].firstTriOrChild; i <= _BVHNodes[current].firstTriOrChild+_BVHNodes[current].triCount; i++){
+									float dist = MTRayTriangleIntersection(ray, GetTri(_BVHTriIndices[i]*3));
+									if (dist > 0 && (dist < closestDist || closestDist == -1)){
+										closestDist = dist;
+										hitTriIndex = _BVHTriIndices[i]*3;
+									}
+								}
+								for (int i=0; i<current; i++){
+									if (_BVHNodes[i].firstTriOrChild == current && _BVHNodes[i].triCount == 0){
+										current = i;
+										break;
+									}
+									if (_BVHNodes[i].firstTriOrChild == current-1 && _BVHNodes[i].triCount == 0){
+										current = i;
+									}
+								}
+								state = FROM_CHILD;
+							}
+							else{
+								current = _BVHNodes[current].firstTriOrChild;
+								state = FROM_PARENT;
+							}
+							break;
+						
+						case FROM_PARENT:
+							if (!RayBoundsIntersection(ray, _BVHNodes[current].aabbMin, _BVHNodes[current].aabbMax)){
+								current++;
+								state = FROM_SIBLING;
+							}
+							else if (_BVHNodes[current].triCount > 0){ //leaf
+								for (int i=_BVHNodes[current].firstTriOrChild; i < _BVHNodes[current].firstTriOrChild+_BVHNodes[current].triCount; i++){
+									float dist = MTRayTriangleIntersection(ray, GetTri(_BVHTriIndices[i]*3));
+									//if (dist > 0) return dist;
+									if (dist > 0 && (dist < closestDist || closestDist == -1)){
+										closestDist = dist;
+										hitTriIndex = _BVHTriIndices[i]*3;
+									}
+								}
+								current++;
+								state = FROM_SIBLING;
+							}
+							else{
+								current = _BVHNodes[current].firstTriOrChild;
+								state = FROM_PARENT;
+							}
+							break;
+					}
+				}
+				return closestDist;
+			}
+
 			HitInfo CastRay(Ray ray){
 				float closestHitDist = -1.;
 				MeshInfo closestHitMesh;
@@ -393,6 +495,8 @@ Shader "Hidden/RayTracer"
 					//set ray
 					ray.origin = _WorldSpaceCameraPos + offset;
 					ray.dir = normalize(worldpos - ray.origin);
+					
+					//return float4(RayBVHIntersection(ray, 0)*ray.dir + ray.origin, 0.);
 
 					color += Trace(ray);
 				}
