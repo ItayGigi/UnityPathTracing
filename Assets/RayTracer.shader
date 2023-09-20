@@ -188,6 +188,16 @@ Shader "Hidden/RayTracer"
 					return true; 
 			} 
 
+			float RayBoundsIntersectionF(Ray ray, float3 _min, float3 _max){
+				float tx1 = (_min.x - ray.origin.x) / ray.dir.x, tx2 = (_max.x - ray.origin.x) / ray.dir.x;
+				float tmin = min(tx1, tx2), tmax = max(tx1, tx2);
+				float ty1 = (_min.y - ray.origin.y) / ray.dir.y, ty2 = (_max.y - ray.origin.y) / ray.dir.y;
+				tmin = max(tmin, min(ty1, ty2)), tmax = min(tmax, max(ty1, ty2));
+				float tz1 = (_min.z - ray.origin.z) / ray.dir.z, tz2 = (_max.z - ray.origin.z) / ray.dir.z;
+				tmin = max(tmin, min(tz1, tz2)), tmax = min(tmax, max(tz1, tz2));
+				if (tmax >= tmin && tmax > 0) return tmin; else return 1e30f;
+			}
+
 			float RaySphereIntersection(Ray ray, Sphere sphere){
 				float3 origin = ray.origin - sphere.pos;
 
@@ -307,6 +317,60 @@ Shader "Hidden/RayTracer"
 				return closestDist;
 			}
 
+			float NewRayBVHIntersection(Ray ray, uint rootIndex){
+				uint curr = rootIndex, stack[64], stackPtr = 0;
+				float minDist = -1.;
+
+				while(true){
+					if (_BVHNodes[curr].triCount > 0){ //leaf
+						for (int i = 0; i < _BVHNodes[curr].triCount; i++){
+							float dist = MTRayTriangleIntersection(ray, GetTri(_BVHTriIndices[i + _BVHNodes[curr].firstTriOrChild]*3));
+							if (dist > 0 && (dist < minDist || minDist == -1.)){
+								minDist = dist;
+								hitTriIndex = _BVHTriIndices[i + _BVHNodes[curr].firstTriOrChild]*3;
+							}
+						}
+
+						if (stackPtr == 0) break;
+						else curr = stack[--stackPtr];
+					
+						continue;
+					}
+
+					uint child1 = _BVHNodes[curr].firstTriOrChild;
+					uint child2 = _BVHNodes[curr].firstTriOrChild+1;
+
+					float dist1 = RayBoundsIntersectionF(ray, _BVHNodes[child1].aabbMin, _BVHNodes[child1].aabbMax);
+					if (dist1 >= minDist && minDist > 0.) dist1 = 1e30f;
+
+					float dist2 = RayBoundsIntersectionF(ray, _BVHNodes[child2].aabbMin, _BVHNodes[child2].aabbMax);
+					if (dist2 >= minDist && minDist > 0.) dist2 = 1e30f;
+
+					if (dist1 > dist2){ //swap
+						float tempf = dist1;
+						dist1 = dist2;
+						dist2 = tempf;
+
+						uint tempi = child1;
+						child1 = child2;
+						child2 = tempi;
+					}
+
+					if (dist1 == 1e30f) 
+					{
+							if (stackPtr == 0) break;
+							else curr = stack[--stackPtr];
+					}
+					else 
+					{
+							curr = child1;
+							if (dist2 != 1e30f) stack[stackPtr++] = child2;
+					}
+				}
+
+				return minDist;
+			}
+
 			float RayBVHIntersection(Ray ray, uint rootIndex){
 				#define FROM_PARENT 0
 				#define FROM_CHILD 1
@@ -410,23 +474,9 @@ Shader "Hidden/RayTracer"
 			}
 
 			HitInfo CastRay(Ray ray){
-				float closestHitDist = -1.;
-				MeshInfo closestHitMesh;
-				Triangle closestHitTri;
-
-				for (int i = 0; i < _ObjCount; i++){
-					if (!RayBoundsIntersection(ray, _Meshes[i].minBounds, _Meshes[i].maxBounds)) continue;
-
-					float dist = RayMeshIntersection(ray, _Meshes[i]);
-
-					if (dist > 0 && (dist < closestHitDist || closestHitDist == -1)){
-						closestHitDist = dist;
-						closestHitMesh = _Meshes[i];
-						closestHitTri = GetTri(hitTriIndex);
-					}
-				}
-
-				if (closestHitDist < 0){
+				float hitDist = NewRayBVHIntersection(ray, 0);
+				
+				if (hitDist < 0){
 					HitInfo noHit;
 					noHit.didHit = false;
 					noHit.hitPos = float3(0., 0., 0.);
@@ -434,11 +484,20 @@ Shader "Hidden/RayTracer"
 					return noHit;
 				}
 
+				MeshInfo hitMesh;
+				for (int i = 0; i < _ObjCount; i++)
+					if (hitTriIndex >= _Meshes[i].startIndex && hitTriIndex < _Meshes[i].endIndex){
+						hitMesh = _Meshes[i];
+						break;
+					}
+
+				Triangle hitTri = GetTri(hitTriIndex);
+
 				HitInfo info;
 				info.didHit = true;
-				info.hitPos = ray.origin + ray.dir * closestHitDist;
-				info.hitNormal = normalize(cross(closestHitTri.v1-closestHitTri.v0, closestHitTri.v2-closestHitTri.v0));
-				info.hitMat = closestHitMesh.mat;
+				info.hitPos = ray.origin + ray.dir * hitDist;
+				info.hitNormal = normalize(cross(hitTri.v1-hitTri.v0, hitTri.v2-hitTri.v0));
+				info.hitMat = hitMesh.mat;
 
 				return info;
 			}
@@ -450,22 +509,20 @@ Shader "Hidden/RayTracer"
 				for (int i=0; i < _MaxBounceCount; i++){
 					HitInfo hitInfo = CastRay(ray);
 
-					if (hitInfo.didHit){
-						ray.origin = hitInfo.hitPos;
-						
-						float3 diffuseDir = normalize(hitInfo.hitNormal + normalize(float3(RandomNumberNormalDist(), RandomNumberNormalDist(), RandomNumberNormalDist())));
-						float3 specularDir = reflect(ray.dir, hitInfo.hitNormal);
-
-						ray.dir = lerp(diffuseDir, specularDir, hitInfo.hitMat.smoothness);
-
-						if (hitInfo.hitMat.emission == 0.)
-							rayColor *= hitInfo.hitMat.color;
-						else
-							incomingLight += rayColor * hitInfo.hitMat.emission * hitInfo.hitMat.color;
-					}
-					else{
+					if (!hitInfo.didHit)
 						break;
-					}
+					
+					ray.origin = hitInfo.hitPos;
+					
+					float3 diffuseDir = normalize(hitInfo.hitNormal + normalize(float3(RandomNumberNormalDist(), RandomNumberNormalDist(), RandomNumberNormalDist())));
+					float3 specularDir = reflect(ray.dir, hitInfo.hitNormal);
+
+					ray.dir = lerp(diffuseDir, specularDir, hitInfo.hitMat.smoothness);
+
+					if (hitInfo.hitMat.emission == 0.)
+						rayColor *= hitInfo.hitMat.color;
+					else
+						incomingLight += rayColor * hitInfo.hitMat.emission * hitInfo.hitMat.color;
 				}
 
 				return incomingLight;
@@ -496,7 +553,8 @@ Shader "Hidden/RayTracer"
 					ray.origin = _WorldSpaceCameraPos + offset;
 					ray.dir = normalize(worldpos - ray.origin);
 					
-					//return float4(RayBVHIntersection(ray, 0)*ray.dir + ray.origin, 0.);
+					//return NewRayBVHIntersection(ray, 0);
+					//return float4(NewRayBVHIntersection(ray, 0)*ray.dir + ray.origin, 0.);
 
 					color += Trace(ray);
 				}

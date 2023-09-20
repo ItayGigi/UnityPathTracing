@@ -10,6 +10,7 @@ using UnityEditor;
 using UnityEditor.Experimental.GraphView;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Animations;
 using static UnityEditor.PlayerSettings;
 
 [StructLayout(LayoutKind.Explicit)]
@@ -226,77 +227,48 @@ public class DrawRayTracing : MonoBehaviour
 
         nodes[rootIndex].firstTriOrChild = 0;
         nodes[rootIndex].triCount = (uint)tridata.Length / 3;
-        UpdateNodeBounds(rootIndex, ref nodes);
+        UpdateNodeBounds(rootIndex, ref nodes, ref indices);
 
         Subdivide(rootIndex, ref indices, ref nodes);
 
-        //foreach (BVHNode node in nodes)
-        //{
-        //    if (node.triCount > 0)
-        //    {
-        //        print(node.triCount);
-        //        UnityEngine.Debug.DrawLine(centroids[indices[node.firstTriOrChild + 1]], centroids[indices[node.firstTriOrChild + 1]] + Vector3.up * 0.2f, Color.blue, 10f);
+        foreach (BVHNode node in nodes)
+        {
+            //if (node.triCount > 0) print(node.triCount);
+        }
 
-        //        for (uint i = node.firstTriOrChild; i < node.firstTriOrChild + node.triCount; i++)
-        //        {
-        //            //UnityEngine.Debug.DrawLine(centroids[indices[i]], centroids[indices[i]] + Vector3.up * 0.2f);
-        //        }
-        //    }
-        //}
-
+        //UnityEngine.Debug.DrawLine(nodes[0].aabbMin, nodes[0].aabbMax, Color.cyan, 50f);
+        //UnityEngine.Debug.DrawLine(nodes[nodes[nodes[0].firstTriOrChild+1].firstTriOrChild].aabbMin, nodes[nodes[nodes[0].firstTriOrChild + 1].firstTriOrChild].aabbMax, Color.green, 50f);
+        //UnityEngine.Debug.DrawLine(nodes[nodes[nodes[0].firstTriOrChild + 1].firstTriOrChild+1].aabbMin, nodes[nodes[nodes[0].firstTriOrChild + 1].firstTriOrChild+1].aabbMax, Color.blue, 50f);
 
         Vector3 GetTriVertex(uint index)
         {
             return vertdata[tridata[index]];
         }
 
-        void UpdateNodeBounds(uint index, ref BVHNode[] nodes)
+        void UpdateNodeBounds(uint index, ref BVHNode[] nodes, ref uint[] indices)
         {
             nodes[index].aabbMin = Vector3.positiveInfinity;
             nodes[index].aabbMax = Vector3.negativeInfinity;
 
             for (uint i = nodes[index].firstTriOrChild; i < nodes[index].firstTriOrChild + nodes[index].triCount; i++)
             {
-                nodes[index].aabbMin = Vector3.Min(nodes[index].aabbMin, GetTriVertex(i * 3));
-                nodes[index].aabbMin = Vector3.Min(nodes[index].aabbMin, GetTriVertex(i * 3 + 1));
-                nodes[index].aabbMin = Vector3.Min(nodes[index].aabbMin, GetTriVertex(i * 3 + 2));
-                nodes[index].aabbMax = Vector3.Max(nodes[index].aabbMax, GetTriVertex(i * 3));
-                nodes[index].aabbMax = Vector3.Max(nodes[index].aabbMax, GetTriVertex(i * 3 + 1));
-                nodes[index].aabbMax = Vector3.Max(nodes[index].aabbMax, GetTriVertex(i * 3 + 2));
+                nodes[index].aabbMin = Vector3.Min(nodes[index].aabbMin, GetTriVertex(indices[i] * 3));
+                nodes[index].aabbMin = Vector3.Min(nodes[index].aabbMin, GetTriVertex(indices[i] * 3 + 1));
+                nodes[index].aabbMin = Vector3.Min(nodes[index].aabbMin, GetTriVertex(indices[i] * 3 + 2));
+                nodes[index].aabbMax = Vector3.Max(nodes[index].aabbMax, GetTriVertex(indices[i] * 3));
+                nodes[index].aabbMax = Vector3.Max(nodes[index].aabbMax, GetTriVertex(indices[i] * 3 + 1));
+                nodes[index].aabbMax = Vector3.Max(nodes[index].aabbMax, GetTriVertex(indices[i] * 3 + 2));
             }
         }
 
         void Subdivide(uint nIndex, ref uint[] indices, ref BVHNode[] nodes)
         {
-            if (nodes[nIndex].triCount <= 2) return;
-
-            // determine split axis and position
-            Vector3 extent = nodes[nIndex].aabbMax - nodes[nIndex].aabbMin;
-
-            //int axis = 0;
-            //if (extent.y > extent.x) axis = 1;
-            //if (extent.z > extent[axis]) axis = 2;
-            //float splitPos = nodes[nIndex].aabbMin[axis] + extent[axis] / 2;
-
             // determine split axis using SAH
-            int bestAxis = -1, axis;
-            float bestPos = 0, bestCost = float.PositiveInfinity;
-            for (axis = 0; axis < 3; axis++)
-                for (uint i = 0; i < nodes[nIndex].triCount; i++)
-                {
-                    float candidatePos = centroids[indices[nodes[nIndex].firstTriOrChild + i]][axis];
-                    float cost = EvaluateSAH(nodes[nIndex], axis, candidatePos, ref indices);
-                    if (cost < bestCost)
-                    {
-                        bestPos = candidatePos;
-                        bestAxis = axis;
-                        bestCost = cost;
-                    }
-                }
-            axis = bestAxis;
-            float splitPos = bestPos;
+            int axis;
+            float splitPos;
+            float splitCost = FindBestSplitPlane(nodes[nIndex], ref indices, out axis, out splitPos);
 
-            //float splitPos = nodes[nIndex].aabbMin[axis] + extent[axis] / 2;
+            if (splitCost >= CalculateNodeCost(nodes[nIndex])) return;
 
             //reorder the indices array to split the triangles
             uint l = nodes[nIndex].firstTriOrChild;
@@ -317,7 +289,6 @@ public class DrawRayTracing : MonoBehaviour
             uint leftCount = l - nodes[nIndex].firstTriOrChild;
             if (leftCount == 0 || leftCount == nodes[nIndex].triCount)
             {
-                print(nodes[nIndex].triCount);
                 return;
             }
 
@@ -331,12 +302,45 @@ public class DrawRayTracing : MonoBehaviour
             nodes[nIndex].firstTriOrChild = leftChildIdx;
             nodes[nIndex].triCount = 0;
 
-            UpdateNodeBounds(leftChildIdx, ref nodes);
-            UpdateNodeBounds(rightChildIdx, ref nodes);
+            UpdateNodeBounds(leftChildIdx, ref nodes, ref indices);
+            UpdateNodeBounds(rightChildIdx, ref nodes, ref indices);
 
             // recurse
             Subdivide(leftChildIdx, ref indices, ref nodes);
             Subdivide(rightChildIdx, ref indices, ref nodes);
+        }
+
+        float FindBestSplitPlane(BVHNode node, ref uint[] indices, out int axis, out float splitPos)
+        {
+            axis = 0;
+            splitPos = 0;
+            float bestCost = float.PositiveInfinity;
+            for (int currAxis = 0; currAxis < 3; currAxis++)
+            {
+                float boundsMin = node.aabbMin[currAxis];
+                float boundsMax = node.aabbMax[currAxis];
+                if (boundsMin == boundsMax) continue;
+                float scale = (boundsMax - boundsMin) / 100;
+                for (uint i = 1; i < 100; i++)
+                {
+                    float candidatePos = boundsMin + i * scale;
+                    float cost = EvaluateSAH(node, currAxis, candidatePos, ref indices);
+                    if (cost < bestCost)
+                    {
+                        splitPos = candidatePos;
+                        axis = currAxis;
+                        bestCost = cost;
+                    }
+                }
+            }
+            return bestCost;
+        }
+
+        float CalculateNodeCost(BVHNode node)
+        {
+            Vector3 e = node.aabbMax - node.aabbMin;
+            float surfaceArea = e.x * e.y + e.y * e.z + e.z * e.x;
+            return node.triCount * surfaceArea;
         }
 
         float EvaluateSAH(BVHNode node, int axis, float pos, ref uint[] indices)
