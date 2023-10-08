@@ -1,17 +1,6 @@
-using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Reflection;
 using System.Runtime.InteropServices;
-using Unity.VisualScripting;
-using UnityEditor;
-using UnityEditor.Experimental.GraphView;
-using UnityEditor.SceneManagement;
 using UnityEngine;
-using UnityEngine.Animations;
-using static UnityEditor.PlayerSettings;
 
 [StructLayout(LayoutKind.Explicit)]
 struct IntToFloat
